@@ -57,15 +57,31 @@ All three fire a `CONSENSUS_FAILED` or `ESCALATION_TRIGGERED` event on the **Coo
  │    └─ who is the right human for this?           │
  │    └─ what channel do they prefer?               │
  │                                                  │
- │  EscalationPacket (what the human sees)          │
+ │  EscalationPacket (raw — what happened)          │
  │    └─ what was being decided                     │
  │    └─ why agents couldn't agree                  │
  │    └─ each agent's vote + confidence + reasoning │
  │    └─ relevant context + session history         │
  │    └─ recommended action (highest-weight option) │
  │                                                  │
+ │         ↓ handed to pact-hx                      │
+ └─────────────────────────────────────────────────┘
+          │
+ ┌────────▼────────────────────────────────────────┐
+ │                   pact-hx                        │
+ │                                                  │
+ │  adapts tone to this human's communication style │
+ │  surfaces relevant memory from past escalations  │
+ │  aligns framing with their known values          │
+ │  decides: formal notice or conversational nudge? │
+ └────────┬────────────────────────────────────────┘
+          │
+ ┌────────▼────────────────────────────────────────┐
+ │                   pact-hh                        │
+ │                                                  │
  │  HumanChannel                                    │
  │    └─ Slack / email / webhook / UI               │
+ │       (rendered by pact-hx tone engine)          │
  │                                                  │
  │  ← human responds: decision + optional reasoning │
  │                                                  │
@@ -168,11 +184,13 @@ pact-hh sits between pact-ax coordination and the humans in your organisation:
 │                       │                                       │
 │                  ┌────▼─────┐                                │
 │                  │ pact-hh  │  ◄── this repo                 │
-│                  │          │                                │
-│                  │ catches  │                                │
-│                  │ routes   │                                │
-│                  │ waits    │                                │
-│                  │ re-injects│                               │
+│                  │          │      catches, routes,           │
+│                  │          │      waits, re-injects          │
+│                  └────┬─────┘                                │
+│                       │ EscalationPacket                      │
+│                  ┌────▼─────┐                                │
+│                  │ pact-hx  │      tone, memory,              │
+│                  │          │      values, style              │
 │                  └────┬─────┘                                │
 │                       │                                       │
 └───────────────────────┼──────────────────────────────────────┘
@@ -235,6 +253,37 @@ pact_hh/
 
 ---
 
+## pact-hh and pact-hx — not the same thing
+
+These two repos are often confused. They solve adjacent but distinct problems.
+
+**pact-hh** answers: *when should a human enter the protocol, and how does their decision get back in?*
+It handles the escalation lifecycle — catching signals, routing to the right person, re-injecting the decision.
+
+**pact-hx** answers: *how should that interaction with the human feel?*
+It handles personalization — tone adaptation, emotional context retention, memory across sessions, values alignment.
+
+They are designed to work together. pact-hh owns the protocol. pact-hx owns the experience.
+
+```
+pact-hh produces:   EscalationPacket (raw structured data)
+        ↓
+pact-hx renders:    "Hey Amarnath — billing-agent and compliance-agent
+                     hit a wall on this refund. Here's what I'd suggest..."
+        ↓
+pact-hh delivers:   via Slack / email / webhook — in the human's preferred channel
+        ↓
+pact-hh receives:   human's reply
+        ↓
+pact-hx interprets: tone, certainty signals, implicit intent
+        ↓
+pact-hh re-injects: structured HumanDecision into CoordinationBus
+```
+
+Without pact-hx, escalations land as robotic system alerts. With it, they read like a thoughtful colleague asking for a second opinion.
+
+---
+
 ## Relationship to the PACT stack
 
 | Repo | Role |
@@ -242,9 +291,10 @@ pact_hh/
 | [pact](https://github.com/neurobloomai/pact) | Intent translation across platforms |
 | [pact-ax](https://github.com/neurobloomai/pact-ax) | Agent collaboration primitives |
 | [pact-bridge](https://github.com/neurobloomai/pact-bridge) | Orchestration — connects pact + pact-ax |
+| [pact-hx](https://github.com/neurobloomai/pact-hx) | Human experience — tone, memory, values alignment |
 | **pact-hh** | **Human escalation loop — closes the circle** |
 
-The PACT ecosystem is only complete when human judgment can enter and exit the system as cleanly as agent judgment. pact-hh is that door.
+The PACT ecosystem is only complete when human judgment can enter and exit the system as cleanly as agent judgment. pact-hh is that door. pact-hx makes sure humans actually want to walk through it.
 
 ---
 
