@@ -162,8 +162,9 @@ This is then:
 2. **Fed into TrustNetwork** — agents whose votes aligned with the human get a small trust boost; those who diverged get recalibrated
 3. **Stored as EpistemicState** — future consensus rounds on similar intents use this as prior knowledge
 4. **Routed back through pact-bridge** — the original external platform gets its response
+5. **Forwarded to rlp-0** via `RLPAdapter.on_decision()` — if the human approved, `acknowledge_repair()` revalidates relational primitives and releases the bridge gate if rupture risk actually dropped below threshold
 
-The agents learn. The loop closes.
+The agents learn. The relational gate reopens. The loop closes.
 
 ---
 
@@ -204,7 +205,43 @@ pact-hh sits between pact-ax coordination and the humans in your organisation:
 
 ---
 
-## Planned modules
+## Wiring with pact-bridge
+
+Pass `bridge.rlp_store` at startup — that is the entire wiring. Both components share the same `RLPSessionStore`, so when a human approves a decision, `acknowledge_repair()` runs against the live session and releases the bridge gate.
+
+```python
+from pact_bridge import PACTBridge, BridgeConfig
+from pact_hh import HumanEscalationLoop
+
+bridge = PACTBridge(config=BridgeConfig(rupture_threshold=0.45))
+
+loop = HumanEscalationLoop.create(
+    slack_token      = "xoxb-...",
+    default_human_id = "on-call",
+    rlp_store        = bridge.rlp_store,   # shared relational ledger
+)
+loop.start()
+
+# What flows automatically after this:
+#
+#   bridge detects low trust or repeated consensus failure
+#     → rlp-0 rupture → RUPTURE_BLOCKED response
+#     → your code calls loop.escalate(session_id=...)
+#
+#   loop fires on_escalation_opened(session_id)
+#     → rlp-0: escalation registered as relational stress
+#
+#   human replies "approve"
+#     → loop.handle_reply(slack_payload, channel="slack")
+#     → DecisionInjector.inject() → RLPAdapter.on_decision()
+#     → acknowledge_repair() → gate releases if risk < threshold
+```
+
+The `rlp_store` is the only shared object. Everything else — escalation routing, SLA tracking, channel delivery — runs independently inside `HumanEscalationLoop`.
+
+---
+
+## Modules
 
 ```
 pact_hh/
@@ -216,8 +253,9 @@ pact_hh/
 │   ├── email.py             HTML email + reply parser
 │   └── webhook.py           Generic HTTP webhook + callback
 ├── response_adapter.py      Parse human reply → HumanDecision
-├── decision_injector.py     Re-inject into CoordinationBus + TrustNetwork
+├── decision_injector.py     Re-inject into CoordinationBus + TrustNetwork + rlp-0
 ├── escalation_store.py      Track open escalations, timeouts, SLA
+├── rlp_adapter.py           pact-bridge RLPSession → rlp-0 repair signal
 └── __init__.py
 ```
 
@@ -284,10 +322,6 @@ Without pact-hx, escalations land as robotic system alerts. With it, they read l
 
 ---
 
-## rlp-0 Integration
-See [docs/INTEGRATION_RLP0.md](docs/INTEGRATION_RLP0.md) for wiring rlp-0
-as the shared relational substrate across pact-bridge and pact-hh.
-
 ## Relationship to the PACT stack
 
 | Repo | Role |
@@ -301,12 +335,6 @@ as the shared relational substrate across pact-bridge and pact-hh.
 The PACT ecosystem is only complete when human judgment can enter and exit the system as cleanly as agent judgment. pact-hh is that door. pact-hx makes sure humans actually want to walk through it.
 
 ---
-
-## Status
-
-🚧 **In active development.**
-
-The architecture above reflects the design intent. Implementation is underway. If you want to contribute — channels, response parsers, or the decision injector — open an issue or reach out at founders@neurobloom.ai.
 
 ---
 
