@@ -58,6 +58,14 @@ except ImportError:
     TrustNetwork = None
     _TRUST_AVAILABLE = False
 
+# rlp-0 adapter — optional; enables relational gate release after human repair
+try:
+    from pact_hh.rlp_adapter import RLPAdapter
+    _RLP_AVAILABLE = True
+except ImportError:
+    RLPAdapter = None
+    _RLP_AVAILABLE = False
+
 
 # ── Result type ────────────────────────────────────────────────────────────────
 
@@ -70,6 +78,7 @@ class InjectionResult:
     published_to_bus: bool              = False
     trust_updated:    bool              = False
     store_closed:     bool              = False
+    rlp_updated:      bool              = False   # True if rlp-0 relational gate was updated
     agents_notified:  List[str]         = field(default_factory=list)
     trust_deltas:     Dict[str, float]  = field(default_factory=dict)
     errors:           List[str]         = field(default_factory=list)
@@ -109,13 +118,15 @@ class DecisionInjector:
 
     def __init__(
         self,
-        store: EscalationStore,
-        bus:   Optional[Any] = None,   # CoordinationBus | None
-        trust: Optional[Any] = None,   # TrustNetwork | None
+        store:       EscalationStore,
+        bus:         Optional[Any] = None,   # CoordinationBus | None
+        trust:       Optional[Any] = None,   # TrustNetwork | None
+        rlp_adapter: Optional[Any] = None,   # RLPAdapter | None
     ) -> None:
-        self._store = store
-        self._bus   = bus
-        self._trust = trust
+        self._store       = store
+        self._bus         = bus
+        self._trust       = trust
+        self._rlp_adapter = rlp_adapter
 
     # ── Main entry point ───────────────────────────────────────────────────────
 
@@ -148,6 +159,12 @@ class DecisionInjector:
         # ── 3. Update TrustNetwork ────────────────────────────────────────────
         if self._trust is not None and record is not None:
             self._update_trust(decision, record, result)
+
+        # ── 4. Update rlp-0 relational state ─────────────────────────────────
+        # Human decision = repair signal. rlp-0 validates that primitives
+        # actually improved, then releases the gate if they did.
+        if self._rlp_adapter is not None and record is not None:
+            self._update_rlp(decision, record, result)
 
         logger.info(
             "Injection complete: escalation=%s decision=%r "
@@ -249,6 +266,48 @@ class DecisionInjector:
 
         except Exception as exc:
             msg = f"Trust update failed: {exc}"
+            logger.error(msg)
+            result.errors.append(msg)
+
+    def _update_rlp(
+        self,
+        decision: HumanDecision,
+        record:   EscalationRecord,
+        result:   InjectionResult,
+    ) -> None:
+        """
+        Forward human decision to rlp-0 via RLPAdapter.
+
+        The adapter looks up the RLPSession by session_id and calls
+        on_human_decision(). rlp-0 then:
+          - 'approve' → updates primitives to healthy values + acknowledge_repair()
+          - 'hold'    → mild downgrade, gate stays as-is
+          - 'escalate'→ deeper uncertainty signal, gate stays closed
+
+        The gate releases only if acknowledge_repair() validates that rupture_risk
+        actually dropped below threshold. No unconditional release.
+        """
+        try:
+            session_id   = record.packet.session_id if record.packet else None
+            agent_rec    = record.packet.recommended if record.packet else None
+
+            if not session_id:
+                logger.debug("_update_rlp: no session_id on record — skipping rlp update")
+                return
+
+            updated = self._rlp_adapter.on_decision(
+                session_id           = session_id,
+                decision             = decision.decision,
+                agent_recommendation = agent_rec,
+            )
+            result.rlp_updated = updated
+            logger.info(
+                "RLP update: session=%s decision=%r agent_rec=%r updated=%s",
+                session_id, decision.decision, agent_rec, updated,
+            )
+
+        except Exception as exc:
+            msg = f"RLP update failed: {exc}"
             logger.error(msg)
             result.errors.append(msg)
 

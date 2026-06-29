@@ -81,6 +81,14 @@ except ImportError:
     EventType = None
     _BUS_AVAILABLE = False
 
+# rlp-0 adapter — optional; tracks escalation as relational stress signal
+try:
+    from pact_hh.rlp_adapter import RLPAdapter
+    _RLP_AVAILABLE = True
+except ImportError:
+    RLPAdapter = None
+    _RLP_AVAILABLE = False
+
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
@@ -134,15 +142,23 @@ class HumanEscalationLoop:
 
     def __init__(
         self,
-        config:   LoopConfig             = None,
-        rules:    List[RoutingRule]       = None,
-        bus:      Optional[Any]           = None,
-        trust:    Optional[Any]           = None,
-        channels: Optional[ChannelRegistry] = None,
+        config:    LoopConfig              = None,
+        rules:     List[RoutingRule]       = None,
+        bus:       Optional[Any]           = None,
+        trust:     Optional[Any]           = None,
+        channels:  Optional[ChannelRegistry] = None,
+        rlp_store: Optional[Any]           = None,   # pact_bridge.RLPSessionStore
     ) -> None:
         self._config  = config or LoopConfig()
         self._bus     = bus
         self._trust   = trust
+
+        # rlp-0 adapter — maps escalation events + human decisions to relational state
+        self._rlp_adapter = (
+            RLPAdapter(rlp_store=rlp_store)
+            if (_RLP_AVAILABLE and rlp_store is not None)
+            else None
+        )
 
         # Sub-components
         self._router  = EscalationRouter(
@@ -158,9 +174,10 @@ class HumanEscalationLoop:
         self._channels  = channels or ChannelRegistry()
         self._adapter   = HumanResponseAdapter(store=self._store)
         self._injector  = DecisionInjector(
-            store = self._store,
-            bus   = self._bus,
-            trust = self._trust,
+            store       = self._store,
+            bus         = self._bus,
+            trust       = self._trust,
+            rlp_adapter = self._rlp_adapter,
         )
 
         self._ticker_thread: Optional[threading.Thread] = None
@@ -185,10 +202,15 @@ class HumanEscalationLoop:
         rules:             List[RoutingRule] = None,
         bus:               Optional[Any] = None,
         trust:             Optional[Any] = None,
+        rlp_store:         Optional[Any] = None,   # bridge.rlp_store
         dry_run:           bool = False,
     ) -> "HumanEscalationLoop":
         """
         Convenience constructor — builds a fully wired loop with Slack enabled.
+
+        Pass ``rlp_store=bridge.rlp_store`` to enable rlp-0 relational state
+        tracking: escalations register as stress signals, human approval triggers
+        gate release via acknowledge_repair().
         """
         channels = ChannelRegistry()
         channels.register(SlackChannel(
@@ -200,11 +222,12 @@ class HumanEscalationLoop:
         channels.register(WebhookChannel(dry_run=dry_run))
 
         return cls(
-            config   = LoopConfig(default_human_id=default_human_id),
-            rules    = rules or [],
-            bus      = bus,
-            trust    = trust,
-            channels = channels,
+            config     = LoopConfig(default_human_id=default_human_id),
+            rules      = rules or [],
+            bus        = bus,
+            trust      = trust,
+            channels   = channels,
+            rlp_store  = rlp_store,
         )
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -352,7 +375,12 @@ class HumanEscalationLoop:
         )
         self._stats["escalated"] += 1
 
-        # 3. Render body (plain text fallback — pact-hx would render here)
+        # 3. Signal escalation stress to rlp-0 — before delivery so the relational
+        #    state reflects the human intervention even if delivery is delayed
+        if self._rlp_adapter is not None:
+            self._rlp_adapter.on_escalation_opened(packet.session_id)
+
+        # 4. Render body (plain text fallback — pact-hx would render here)
         body = packet.plain_text()
 
         # 4. Deliver via channel
@@ -509,9 +537,10 @@ class HumanEscalationLoop:
     def stats(self) -> Dict[str, Any]:
         return {
             **self._stats,
-            "store":   self._store.metrics(),
-            "router":  self._router.stats(),
+            "store":    self._store.metrics(),
+            "router":   self._router.stats(),
             "channels": self._channels.healthy(),
+            "rlp":      "connected" if self._rlp_adapter and self._rlp_adapter._available else "not connected",
         }
 
     def health(self) -> Dict[str, Any]:
@@ -519,6 +548,7 @@ class HumanEscalationLoop:
             "running":          self._running,
             "open_escalations": len(self._store),
             "channels":         self._channels.healthy(),
+            "rlp_adapter":      "connected" if self._rlp_adapter and self._rlp_adapter._available else "not connected",
         }
 
     def __repr__(self) -> str:

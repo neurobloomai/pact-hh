@@ -41,6 +41,7 @@ from pact_hh.human_channels import (
 )
 from pact_hh.loop import EscalationOutcome, HumanEscalationLoop, LoopConfig
 from pact_hh.response_adapter import HumanResponseAdapter
+from pact_hh.rlp_adapter import RLPAdapter
 
 __all__ = [
     # Core types
@@ -73,4 +74,6 @@ __all__ = [
     "HumanEscalationLoop",
     "LoopConfig",
     "EscalationOutcome",
+    # RLP-0 bridge
+    "RLPAdapter",
 ]

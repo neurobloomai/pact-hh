@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pact-hh"
+version = "0.1.0"
+description = "pact-hh: Human escalation loop for the PACT ecosystem"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "NeuroBloom", email = "hello@neurobloom.ai" }
+]
+keywords = [
+    "human-in-the-loop",
+    "escalation",
+    "multi-agent",
+    "ai-infrastructure",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+# Map the repo root to the pact_hh package namespace.
+# decision_injector.py → importable as pact_hh.decision_injector
+sources = {"" = "pact_hh"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
